@@ -1,0 +1,241 @@
+<template>
+	<view class="stuff-list" @touchstart.stop.prevent="handleTouchstart" @touchmove="handleTouchmove"
+		@touchend="handleTouchend">
+		<drag-button @click="handleDragTap"></drag-button>
+		<view class="header">
+			<text class="header-title">物品</text>
+			<view class="header-button" @click="openFoundTag">
+				<uni-icons type="plusempty" color="#3A83F6" size="32"></uni-icons>
+			</view>
+		</view>
+		<view class="stuff-list">
+			<block v-for="stuff in bindedTag.list" :key="stuff.id">
+				<stuff-item :data="stuff"></stuff-item>
+			</block>
+			<view  v-if="bindedTag.list.length === 0 && !loading" @click="openFoundTag">
+				<image class="not-found" src="../../../static/not-found.png"></image>
+				<uni-icons type="plus-filled" color="#3A83F6" size="46"></uni-icons>
+			</view>
+		</view>
+	</view>
+</template>
+
+<script setup>
+	import {
+		ref,
+		reactive,
+		getCurrentInstance,
+		computed
+	} from 'vue';
+	import {
+		onLoad,
+		onShow,
+		onHide
+	} from '@dcloudio/uni-app';
+	import DragButton from '../components/drag-button.vue';
+	import StuffItem from '../components/stuff.vue';
+	import {
+		openBluetoothAdapter
+	} from '@/common/bluetooth';
+	import {
+		calculateDistance
+	} from '@/utils/index';
+
+	const screenTop = ref(0.6); // 子窗体初始位置 百分比
+	const screenTops = reactive([0.6, 0.1]); // 子窗体距离顶部 百分比
+	const screenStatus = ref(0);
+	const screenHeight = ref(0); // 屏幕高度
+	const touchstartY = ref(0); // 开始触摸时的y坐标
+	const touchstartTime = ref(0); // 开始触摸的时间戳
+	const bindedTag = reactive({
+		list: [],
+	});
+    const loading = ref(true);
+
+	onLoad(() => {
+		this.subNVue = uni.getSubNVueById('stuff-list');
+		const viewWin = uni.getWindowInfo();
+		// console.log('viewWin------->' + JSON.stringify(viewWin));
+		screenHeight.value = viewWin.screenHeight;
+		// 通知其他页面子窗体已加载完成
+		uni.$emit('subnvue-loaded', true);
+		// 监听主窗体发送的设备列表事件
+		uni.$on('emit-user-binded-tags', (data) => {
+			bindedTag.list = data;
+            loading.value = false;
+		});
+		// 监听新增子窗体新增设备事件
+		uni.$on('created-bind', (newTag) => {
+			bindedTag.list.unshift({
+				...newTag,
+				address: addressToStr(newTag.address),
+				distance: {
+					text: '在你身边',
+					value: 0
+				}
+			});
+		});
+		// 监听移除事件
+		uni.$on('remove-device', (deviceId) => {
+			bindedTag.list = bindedTag.list.filter((item) => item.deviceId !== deviceId);
+		});
+		// 监听位置变化事件
+		uni.$on('emit-current-location', computedDistanceByLocation);
+		// 监听重命名
+		uni.$on('emit-rename', (target) => {
+			const newTags = bindedTag.list.map((item) => {
+				if (item.deviceId === target.deviceId) {
+					item.name = target.name;
+				}
+				return item;
+			});
+			bindedTag.list = newTags;
+		});
+	});
+
+	onShow(() => {
+		// 
+	});
+
+	onHide(() => {
+		// 
+	});
+
+	const addressToStr = (address) => {
+		const {
+			country,
+			province,
+			city,
+			district,
+			street
+		} = address;
+		return country + province + city + district + street;
+	}
+
+	const handleDragTap = () => {
+		screenStatus.value = !!screenStatus.value ? 0 : 1;
+		this.subNVue.setStyle({
+			top: `${(screenTops[screenStatus.value] * 100)}%`
+		})
+	}
+
+	const computedDistanceByLocation = (currentLocation) => {
+		const newTags = bindedTag.list.map((tag) => {
+			const dis = calculateDistance(currentLocation, {
+				latitude: tag.latitude,
+				longitude: tag.longitude
+			});
+			return {
+				...tag,
+				distance: dis,
+			}
+		});
+		bindedTag.list = newTags;
+	}
+
+	// 添加新物品
+	const openFoundTag = () => {
+		this.subNVuePopup = uni.getSubNVueById('popup');
+		this.subNVuePopup.show('slide-in-bottom');
+		uni.$emit('popup-open');
+	}
+
+	// 滑动开始
+	const handleTouchstart = (evt) => {
+		const {
+			timeStamp,
+			changedTouches
+		} = evt;
+		touchstartY.value = changedTouches[0].screenY;
+		touchstartTime.value = timeStamp;
+	}
+	// 滑动中
+	const handleTouchmove = (evt) => {
+		const {
+			changedTouches
+		} = evt;
+		const screenY = changedTouches[0].screenY;
+		const moveY = screenY - touchstartY.value;
+		const diffY = moveY / screenHeight.value;
+		let top = 0;
+		if (diffY > 0) {
+			// 下滑
+			top = screenTop.value + diffY;
+		} else {
+			// 上滑
+			top = screenTop.value + diffY;
+		}
+		screenTop.value = top;
+		if (top < 0.1 || top > 0.6) return;
+		// this.subNVue.setStyle({
+		// 	top: `${top * 100}%`,
+		// });
+	}
+	// 滑动结束
+	const handleTouchend = (evt) => {
+		const {
+			timeStamp,
+			changedTouches
+		} = evt;
+		const endY = changedTouches[0].screenY;
+		const diffY = endY - touchstartY.value;
+		const diffTime = timeStamp - touchstartTime.value;
+		screenTop.value = diffY + screenTop.value;
+		if (diffY > 10) {
+			if (diffTime < 300) {
+			console.log('=================下滑================', diffY)
+				this.subNVue.setStyle({
+					top: '60%'
+				});
+				screenStatus.value = 0;
+			}
+		} else if (diffY < -10) {
+			if (diffTime < 300) {
+				console.log('=================上滑================', diffY)
+				this.subNVue.setStyle({
+					top: '10%'
+				});
+				screenStatus.value = 1;
+			}
+		}
+	}
+</script>
+
+<style scoped>
+	.stuff-list {
+		flex: 1;
+		align-items: center;
+		width: 750rpx;
+		height: 1440rpx;
+		border-top-left-radius: 16rpx;
+		border-top-right-radius: 16rpx;
+		background-color: #fff;
+		overflow: hidden;
+	}
+	
+	.not-found {
+		width: 458rpx;
+		height: 280rpx;
+	}
+
+	.header {
+		width: 750rpx;
+		display: flex;
+		flex-direction: row;
+		justify-content: space-between;
+		align-items: center;
+		padding: 0 30rpx;
+		padding-bottom: 30rpx;
+		border-bottom: #C2C2C0 1rpx solid;
+	}
+
+	.header-title {
+		font-size: 48rpx;
+		font-weight: bold;
+	}
+	
+	.device-list {
+		height: 48rpx;
+		width: 750rpx;
+	}
+</style>

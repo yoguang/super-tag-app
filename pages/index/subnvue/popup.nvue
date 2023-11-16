@@ -1,0 +1,329 @@
+<template>
+	<view class="popup">
+		<view class="popup-body">
+			<view class="popup-header">
+				<view class="popup-header-close" @click="handleClose">
+					<uni-icons type="closeempty" size="36rpx" color="#7C7C7C"></uni-icons>
+				</view>
+				<view class="popup-header-text">
+					<view v-if="isReady">
+						<text class="popup-header-title">连接</text>
+					</view>
+					<view v-else-if="isFinded">
+						<text class="popup-header-title">设置名称</text>
+					</view>
+					<view v-else>
+						<text class="popup-header-title">正在搜索Tag...</text>
+						<text class="popup-header-desc">请将Tag打开并靠近手机以开始。</text>
+					</view>
+				</view>
+			</view>
+
+			<view class="popup-content">
+				<setting-name v-if="isFinded && !isReady" @focus="onFocus" @blur="onBlur" @confirm="onConfirm"
+					@cancel="handleClose"></setting-name>
+				<image v-if="!isFinded && !isReady" class="finding-img" src="../../../static/finding_tag.jpg"></image>
+				
+				<image v-if="isReady" class="connecting-img" src="../../../static/not-found.png"></image>
+			</view>
+
+			<view class="popup-footer" v-if="isReady">
+				<view class="connecting">
+					<text v-if="isConnecting" class="connecting-text">正在连接...</text>
+					<text class="connecting-name">{{equipment.name}}</text>
+				</view>
+				<view class="popup-footer-buttons">
+					<view class="footer-button" @click="onCancel">
+						<uni-link color="#2E7BFD" text="取消" showUnderLine="false" fontSize="18"></uni-link>
+					</view>
+					<view v-if="!isConnecting" class="footer-button" @click="createConnection">
+						<uni-link color="#2E7BFD" text="连接" showUnderLine="false" fontSize="18"></uni-link>
+					</view>
+				</view>
+			</view>
+		</view>
+	</view>
+</template>
+
+<script setup>
+	import {
+		ref,
+		reactive,
+		watchEffect
+	} from 'vue';
+	import {
+		onLoad,
+		onHide,
+	} from '@dcloudio/uni-app';
+	import {
+		startBluetoothDevicesDiscovery,
+		stopBluetoothDevicesDiscovery,
+		createBLEConnection,
+	} from '@/common/bluetooth';
+	import {
+		createDeviceConnect,
+	} from '@/utils/services';
+	import settingName from '../components/setting-name.vue'
+
+	const isFinded = ref(false); // 找到设备
+	const isReady = ref(false); // 已准备好，待连接
+	const isConnected = ref(false); // 连接完成
+	const isConnecting = ref(false); // 连接中
+	const equipment = reactive({
+		deviceId: '',
+		name: '',
+		RSSI: 0,
+	});
+
+	onLoad(() => {
+		this.subNVuePopup = uni.getSubNVueById('popup');
+		uni.$on('popup-open', () => {
+			startBLEDiscovery();
+		});
+	});
+
+	onHide(() => {
+		stopBluetoothDevicesDiscovery();
+	});
+
+	const reState = () => {
+		isFinded.value = false;
+		isConnected.value = false;
+		isConnecting.value = false;
+		isReady.value = false;
+	}
+
+	const onConfirm = (name) => {
+		console.log('确定物品名称：' + name);
+		equipment.name = name;
+		isReady.value = true;
+		isFinded.value = false;
+		stopBluetoothDevicesDiscovery();
+		this.subNVuePopup.setStyle({
+			bottom: '0'
+		});
+	}
+
+	// 取消连接
+	const onCancel = () => {
+		// 连接中 取消直接隐藏 popup
+		if (isConnecting) {
+			this.subNVuePopup.hide();
+			return;
+		}
+		// 返回命名
+		isReady.value = false;
+		isFinded.value = true;
+	}
+
+	const onFocus = () => {
+		this.subNVuePopup.setStyle({
+			bottom: '15%'
+		})
+	}
+
+	const onBlur = () => {
+		this.subNVuePopup.setStyle({
+			bottom: '0'
+		});
+	}
+
+	watchEffect(() => {
+		if (isFinded.value) {
+			console.log('watchEffect-------------')
+			stopBluetoothDevicesDiscovery();
+		}
+	})
+
+	// 扫描蓝牙设备
+	const startBLEDiscovery = () => {
+		console.log('------------------开始搜索设备------------------');
+		startBluetoothDevicesDiscovery((devices) => {
+			// if (equipment.deviceId) return;
+			const _devices = devices.filter(item => item.RSSI > -60 && item.localName);
+			if (_devices.length) {
+				console.log('startBluetoothDevicesDiscovery: ' + JSON.stringify(_devices));
+				const {
+					deviceId,
+					localName,
+					RSSI
+				} = _devices[0];
+				equipment.deviceId = deviceId;
+				equipment.name = localName;
+				equipment.RSSI = RSSI;
+				isFinded.value = true;
+				return;
+			}
+		});
+	}
+
+
+	// 连接蓝牙
+	const createConnection = () => {
+		if (isConnecting.value) return;
+		isConnecting.value = true;
+		console.log('开始连接蓝牙------------------------');
+		createBLEConnection(equipment.deviceId, () => {
+			isConnected.value = true;
+			uni.getLocation({
+				type: 'gcj02',
+				geocode: true,
+				isHighAccuracy: true,
+				success: (res) => {
+					console.log('获取定位成功');
+					const {
+						latitude,
+						longitude,
+						address
+					} = res;
+					createBindTag({
+						latitude,
+						longitude,
+						address
+					});
+				},
+				fail(e) {
+					console.log('获取定位失败：' + JSON.stringify(e));
+				}
+			});
+		});
+	}
+
+	// 绑定Tag设备
+	const createBindTag = async (location) => {
+		try {
+			const {
+				userId
+			} = uni.getStorageSync('SUPER-TAG-UserInfo');
+			const newTag = {
+				deviceId: equipment.deviceId,
+				name: equipment.name,
+				userId,
+				...location
+			}
+			console.log('创建连接： ' + JSON.stringify(newTag));
+			const res = await createDeviceConnect(newTag);
+			if (res.success) {
+				isConnecting.value = false;
+				uni.$emit('created-bind', newTag);
+				this.subNVuePopup.hide('slide-out-bottom');
+				reState();
+			}
+		} catch (e) {
+			console.log('绑定设备失败：', e);
+		}
+	}
+
+	const handleClose = () => {
+		reState();
+		this.subNVuePopup.hide('slide-out-bottom');
+	}
+</script>
+
+<style scoped>
+	.popup {
+		flex: 1;
+		flex-direction: column;
+		justify-content: flex-end;
+		align-items: center;
+	}
+
+	.popup-body {
+		width: 728rpx;
+		height: 764rpx;
+		padding: 40rpx;
+		border-radius: 80rpx;
+		background-color: #fff;
+	}
+
+	.popup-header {
+		align-items: center;
+	}
+
+	.popup-header-close {
+		align-self: flex-end;
+		width: 54rpx;
+		height: 54rpx;
+		justify-content: center;
+		align-items: center;
+		border-radius: 50%;
+		background-color: #EEEEEE;
+	}
+
+	.popup-header-text {
+		margin-top: -28rpx;
+	}
+
+	.popup-header-title {
+		font-size: 54rpx;
+		font-weight: 500;
+	}
+
+	.popup-header-desc {
+		font-size: 28rpx;
+	}
+
+	.popup-content {
+		flex: 1;
+		align-items: center;
+		margin-top: 40rpx;
+	}
+
+	.connecting {
+		align-items: center;
+	}
+
+	.connecting-text {
+		font-size: 36rpx;
+		font-weight: 500;
+		margin-top: 30rpx;
+	}
+
+	.connecting-name {
+		color: #666;
+		text-align: center;
+	}
+
+	.finding-img {
+		width: 364.26rpx;
+		height: 423.53rpx;
+		transition: all 500ms;
+	}
+
+	.connecting-img {
+		margin-top: 40rpx;
+		width: 458rpx;
+		height: 280rpx;
+	}
+
+	.popup-footer {
+		align-items: center;
+	}
+
+	.popup-footer-buttons {
+		flex: 1;
+		width: 460rpx;
+		flex-direction: row;
+		justify-content: space-between;
+	}
+
+	.footer-button {
+		padding: 20rpx;
+	}
+
+	.input-cover {
+		display: flex;
+		width: 728rpx;
+		height: 98rpx;
+		justify-content: center;
+		align-items: center;
+		margin-top: 80rpx;
+	}
+
+	.name-input {
+		width: 660rpx;
+		height: 98rpx;
+		border-bottom: #333 1rpx solid;
+		background-color: red;
+	}
+</style>

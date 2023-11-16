@@ -1,0 +1,539 @@
+<template>
+	<view class="stuff-info" :style="{height: viewHeight}">
+		<!-- <drag-button @click="handleDragTap"></drag-button> -->
+		<view class="header">
+			<text class="stuff-name">{{stuff.info.name}}</text>
+			<text class="stuff-address">{{stuff.info.address}}</text>
+			<text class="stuff-time">{{stuff.info.time}}</text>
+			<view class="close" @click="closeWindow">
+				<uni-icons color="#717274" size="18" type="closeempty"></uni-icons>
+			</view>
+		</view>
+		<view class="options">
+			<view class="option" :class="{'play-sound': isPlayed}" @click="playSound">
+				<view class="option-icon" :class="{'option-icon-active': isPlayed}" >
+					<uni-icons type="sound-filled"
+						:color="isPlayed ? '#5856DB' : '#FFFFFF'" size="36rpx"></uni-icons>
+				</view>
+				<text class="option-title" :class="{'option-title-active': isPlayed}">播放声音</text>
+				<text class="option-desc" :class="{'option-desc-active': isPlayed}">{{ isPlayed ? (isConnecting ? '连接中...' : '播放中') :'关闭' }}</text>
+			</view>
+
+			<view class="option" @click="gotoLookup">
+				<view class="option-icon found-icon-cover">
+					<uni-icons v-if="stuff.info.distance?.value > 0.01" type="navigate-filled" size="72rpx" color="#307AFD"></uni-icons>
+					<uni-icons v-else type="smallcircle" color="#307AFD" size="72rpx"></uni-icons>
+				</view>
+				<text class="option-title">{{ stuff.info.distance?.value > 0.01 ? '导航' : '查找'}}</text>
+				<text class="option-desc">{{ stuff.info.distance?.text }}</text>
+			</view>
+		</view>
+
+		<view class="notify-card">
+			<view class="card-body">
+				<view class="card-content">
+					<view class="card-warn-icon">
+						<uni-icons type="notification-filled" color="#fff"></uni-icons>
+					</view>
+					<text class="card-content-text">通知</text>
+				</view>
+				<view class="card-footer" @click="handleNotify">
+					<text class="card-footer-text">遗落通知</text>
+					<view class="card-footer-right">
+						<text class="card-footer-right-text">{{ isSwitchNotify ? '开' : '关'}}</text>
+						<uni-icons type="right" color="#c3c3c3"></uni-icons>
+					</view>
+				</view>
+			</view>
+		</view>
+
+		<view class="notify-card">
+			<view class="card-body">
+				<view class="card-content">
+					<view class="card-warn-icon">
+						<uni-icons type="locked-filled" color="#fff"></uni-icons>
+					</view>
+					<text class="card-content-text">标记丢失</text>
+				</view>
+				<view class="card-footer" @click="lose">
+					<text class="card-footer-text card-footer-text-wran" v-if="stuff.info.isLose">已启用</text>
+					<text class="card-footer-text" v-else>启用</text>
+					<view class="card-footer-right" v-if="stuff.info.isLose">
+						<uni-icons type="right" color="#c3c3c3"></uni-icons>
+					</view>
+				</view>
+			</view>
+		</view>
+
+		<view class="footer">
+			<view class="footer-button" @click="handleRename">
+				<text class="footer-button-rename-text">重命名</text>
+			</view>
+		</view>
+		
+		<view class="footer">
+			<view class="footer-button" @click="remove">
+				<text class="footer-button-text">移除此物品</text>
+			</view>
+		</view>
+
+	</view>
+	
+	<uni-popup ref="popupRef">
+		弹出层
+	</uni-popup>
+</template>
+
+<script setup>
+	import {
+		ref,
+		reactive
+	} from 'vue';
+	import {
+		onLoad,
+		onShow
+	} from '@dcloudio/uni-app';
+	import DragButton from '../components/drag-button.vue';
+	import {
+		openBluetoothAdapter,
+		createBLEConnection,
+		getBLEDeviceServices,
+		getBLEDeviceCharacteristics,
+		onBLEConnectionStateChange,
+		writeBLECharacteristicValue,
+	} from '@/common/bluetooth';
+	import {
+		updateDeviceLoseStatus,
+		removeDevice,
+		renameDevice
+	} from '@/utils/services';
+	import { openMap } from '@/utils/index'
+
+	const viewHeight = ref(0);
+	const equipment = reactive({
+		name: '',
+		deviceId: '',
+		serviceId: '',
+		characteristicId: '',
+		isConnected: false,
+	})
+	const isPlayed = ref(false);
+	const isConnecting = ref(false); // 连接中
+	const isSwitchNotify = ref(false);
+	const stuff = reactive({
+		info: {}
+	});
+	const popupRef = ref(null);
+	
+	const screenTop = ref(0.6); // 子窗体初始位置 百分比
+	const screenTops = reactive([0.6, 0.1]); // 子窗体距离顶部 百分比
+	const screenStatus = ref(0);
+	const screenHeight = ref(0); // 屏幕高度
+	const touchstartY = ref(0); // 开始触摸时的y坐标
+	const touchstartTime = ref(0); // 开始触摸的时间戳
+
+	onLoad(() => {
+		const win = uni.getWindowInfo();
+		viewHeight.value = win.windowHeight - 22;
+		this.subNVue = uni.getSubNVueById('stuff-info');
+		uni.$on('selecte-stuff', (data) => {
+			equipment.name = data.name;
+			equipment.deviceId = data.deviceId;
+			stuff.info = data;
+		});
+	});
+	
+	// 改变窗口高度
+	const handleDragTap = () => {
+		screenStatus.value = !!screenStatus.value ? 0 : 1;
+		this.subNVue.setStyle({
+			top: `${(screenTops[screenStatus.value] * 100)}%`
+		})
+	}
+
+	// 关闭当前窗体
+	const closeWindow = () => {
+		this.subNVue.hide('slide-out-bottom');
+	}
+	
+	// 获取定位
+	const getLocation  = () => {
+		uni.getLocation({
+			type: 'gcj02',
+			geocode: true,
+			isHighAccuracy: true,
+			success: (res) => {
+				const {
+					latitude,
+					longitude,
+					address
+				} = res;
+				this.latitude = latitude;
+				this.longitude = longitude;
+				const location = {
+					latitude,
+					longitude,
+				};
+				uni.$emit('emit-current-location', location);
+		
+			}
+		});
+	}
+
+	// 响铃
+	const playSound = () => {
+		const buffer = new ArrayBuffer(1);
+		const dataView = new DataView(buffer);
+		const _isPlayed = isPlayed.value;
+		dataView.setUint8(0, _isPlayed ? 0 : 1);
+		isPlayed.value = !isPlayed.value;
+		if (!equipment.isConnected) {
+			createConnection();
+			return;
+		}
+		writeBLECharacteristicValue({
+			...equipment,
+			buffer
+		});
+	};
+
+	const gotoLookup = () => {
+        console.log('gotoLookup: '+JSON.stringify(stuff.info))
+		if (stuff.info?.distance?.value > 0.01) {
+			openMap(stuff.info);
+			return;
+		}
+		uni.navigateTo({
+			url: '/pages/index/lookup/lookup',
+			success() {
+				uni.$emit('show-lookup', equipment);
+			}
+		});
+	}
+
+	// 遗落通知开关
+	const handleNotify = () => {
+		const _content =  isSwitchNotify.value ? `确定打开遗落通知` : `确定关闭遗落通知`;
+			uni.showModal({
+				title: '提示',
+				content: _content,
+				success: async ({
+					confirm,
+					cancel
+				}) => {
+					if (confirm) {
+						isSwitchNotify.value = !isSwitchNotify.value;
+					}
+				}
+			});
+	}
+	// 标记丢失
+	const lose = async () => {
+		console.log('stuff info: ' + JSON.stringify(stuff.info));
+		const isLose = stuff.info.isLose;
+		uni.showModal({
+			title: '提示',
+			content: isLose ? '关闭丢失模式' : '启用丢失模式',
+			success: async ({
+				confirm,
+				cancel
+			}) => {
+				if (confirm) {
+					stuff.info.isLose = !isLose;
+					const res = await updateDeviceLoseStatus({
+						deviceId: equipment.deviceId,
+						isLose: !isLose
+					});
+					console.log('lose result: ' + JSON.stringify(res))
+					if (res?.success) {
+						stuff.info.isLose = !isLose;
+					}
+				}
+			}
+		});
+	}
+	// 重命名
+	 const handleRename = async () => {
+		uni.showModal({
+			title: '重命名',
+			editable: true,
+			placeholderText: '输入新命名',
+			success: async ({ confirm, content }) => {
+				const _data = { deviceId: equipment.deviceId, name: content };
+				const res = await renameDevice(_data);
+				if (res.success) {
+					equipment.name = content;
+					uni.$emit('emit-rename', _data);
+				} 
+			},
+			fail: (err) =>  {
+				console.log(JSON.stringify(err))
+			}
+		})
+	 }
+	// 移除设备
+	const remove = async () => {
+		uni.showModal({
+			title: '提示',
+			content: `确定要移除${equipment.name}？`,
+			success: async ({
+				confirm,
+				cancel
+			}) => {
+				if (confirm) {
+					const res = await removeDevice(equipment.deviceId);
+					console.log('res-------->'+JSON.stringify(res))
+					if (res?.success) {
+						uni.$emit('remove-device',equipment.deviceId);
+						this.subNVue.hide();
+					}
+				}
+			}
+		});
+		
+	}
+
+	// 连接蓝牙
+	const createConnection = () => {
+		isConnecting.value = true;
+		createBLEConnection(equipment.deviceId, res => {
+			getServices();
+		});
+	};
+
+	/**
+	 * 获取所有服务
+	 */
+	const getServices = () => {
+		getBLEDeviceServices(equipment.deviceId, (services) => {
+			if (services.length <= 0) {
+				getServices();
+				return;
+			}
+			equipment.serviceId = services[2].uuid;
+			// 获取写服务的特征值
+			getCharacteristics();
+		});
+	};
+	/**
+	 * 获取某个服务下的所有特征值
+	 */
+	const getCharacteristics = () => {
+		getBLEDeviceCharacteristics(equipment, (characteristics) => {
+			equipment.characteristicId = characteristics[0].uuid;
+			equipment.isConnected = true;
+			const buffer = new ArrayBuffer(1);
+			const dataView = new DataView(buffer);
+			const _isPlayed = isPlayed.value;
+			dataView.setUint8(0, 1);
+			writeBLECharacteristicValue({
+				...equipment,
+				buffer
+			}, () => {
+				isConnecting.value = false;
+			});
+		});
+	};
+
+
+	// 监听低功耗蓝牙连接状态的改变事件。包括开发者主动连接或断开连接，设备丢失，连接异常断开等等
+	const onConnectionStateChange = () => {
+		onBLEConnectionStateChange(res => {
+			if (!res.connected) {
+				clearInterval(timer);
+			}
+		});
+	};
+</script>
+
+<style scoped>
+	.stuff-info {
+		width: 750rpx;
+		align-items: center;
+		border-top-left-radius: 16rpx;
+		border-top-right-radius: 16rpx;
+		background-color: #f2f2f2;
+		background-image: linear-gradient(to bottom, #FBFBF9, #FAFAFA);
+	}
+
+	.header {
+		width: 750rpx;
+		padding: 0 30rpx;
+        margin-top: 30rpx;
+		position: relative;
+	}
+
+	.stuff-name {
+		color: #000000;
+		font-size: 36rpx;
+		font-weight: bold;
+	}
+
+	.stuff-address,
+	.stuff-time {
+		color: #7B7A78;
+		font-size: 28rpx;
+	}
+
+	.close {
+		position: absolute;
+		top: 0;
+		right: 30rpx;
+		width: 56rpx;
+		height: 56rpx;
+		border-radius: 50%;
+		align-items: center;
+		justify-content: center;
+		background-color: #EDEDEF;
+	}
+
+	.options {
+		width: 750rpx;
+		height: 226rpx;
+		flex-direction: row;
+		justify-content: space-between;
+		padding: 0 30rpx;
+		margin-top: 30rpx;
+	}
+
+	.option {
+		align-items: flex-start;
+		justify-content: center;
+		width: 330rpx;
+		height: 226rpx;
+		padding: 30rpx;
+		border-radius: 16rpx;
+		background-color: #ffffff;
+		box-shadow: 0px 0px 10rpx 2rpx #F2F2F2;
+		transition: background-color 300ms ease-in-out;
+	}
+
+	.option-icon {
+		width: 54rpx;
+		height: 54rpx;
+		justify-content: center;
+		align-items: center;
+		border-radius: 50%;
+		background-color: #5A57D8;
+		margin-bottom: 20rpx;
+	}
+
+	.found-icon-cover {
+		background-color: #ffffff;
+	}
+	.option-title {
+		font-size: 34rpx;
+		font-weight: bold;
+	}
+
+	.option-desc {
+		color: #8D8D8D;
+		font-size: 30rpx;
+		font-weight: 500;
+	}
+
+	.play-sound {
+		background-color: #5A57D8;
+		box-shadow: 0px 0px 10rpx 2rpx #5A57D8;
+	}
+
+	.option-icon-active {
+		background-color: #ffffff;
+	}
+
+	.option-title-active,
+	.option-desc-active {
+		color: #ffffff;
+	}
+
+	.notify-card {
+		width: 750rpx;
+		align-items: center;
+		margin-top: 30rpx;
+	}
+
+	.card-body {
+		width: 690rpx;
+		padding: 32rpx 32rpx 0 32rpx;
+		border-radius: 16rpx;
+		background-color: #ffffff;
+		box-shadow: 0px 0px 10rpx 2rpx #F2F2F2;
+	}
+
+	.card-content {
+		height: 190rpx;
+	}
+
+	.card-warn-icon {
+		width: 54rpx;
+		height: 54rpx;
+		justify-content: center;
+		align-items: center;
+		border-radius: 50%;
+		background-color: #FE473F;
+	}
+
+	.card-content-text {
+		font-size: 32rpx;
+		font-weight: bold;
+		margin-top: 30rpx;
+	}
+
+	.card-footer {
+		height: 98rpx;
+		display: flex;
+		flex-direction: row;
+		justify-content: space-between;
+		align-items: center;
+		border-top: 1rpx solid #c7c7c7;
+	}
+
+	.card-footer-text {
+		flex: 1;
+		font-size: 32rpx;
+	}
+
+	.card-footer-right {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+
+	}
+
+	.card-footer-right-text {
+		color: #878787;
+		font-size: 32rpx;
+	}
+
+	.footer {
+		margin-top: 30rpx;
+		width: 750rpx;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.footer-button {
+		width: 690rpx;
+		height: 98rpx;
+		padding-left: 32rpx;
+		justify-content: center;
+		align-items: flex-start;
+		border-radius: 16rpx;
+		background-color: #ffffff;
+		box-shadow: 0px 0px 10rpx 2rpx #F2F2F2;
+	}
+
+	.footer-button-text {
+		color: #FE473F;
+		font-size: 32rpx;
+	}
+	
+		
+	.footer-button-rename-text {
+		color: #307AFD;
+	}
+	
+	.card-footer-text-wran {
+		color: #FE473F;
+	}
+</style>

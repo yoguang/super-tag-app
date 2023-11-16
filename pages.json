@@ -1,0 +1,111 @@
+{
+    "pages" : [
+		//pages数组中第一项表示应用启动页，参考：https://uniapp.dcloud.io/collocation/pages
+		{
+		    "path" : "pages/index/index",
+		    "style" : {
+		        "app-plus" : {
+		            "titleNView" : false,
+		            "subNVues" : [
+		                {
+		                    "id" : "stuff-list",
+		                    "path" : "pages/index/subnvue/stuffList",
+		                    "style" : {
+		                        "width" : "100%",
+		                        "height" : "90%",
+		                        "position" : "absolute",
+		                        "top" : "60%",
+		                        "mask" : false,
+		                        "background" : "transparent"
+		                    }
+		                },
+		                {
+		                    "id" : "stuff-info",
+							"type" : "popup",
+		                    "path" : "pages/index/subnvue/stuffInfo",
+		                    "style" : {
+		                        "width" : "100%",
+		                        "height" : "90%",
+		                        "position" : "absolute",
+		                        "top" : "10%",
+		                        "background" : "transparent"
+		                    }
+		                },
+		                {
+		                    "id" : "popup",
+		                    "type" : "popup",
+		                    "path" : "pages/index/subnvue/popup",
+		                    "style" : {
+		                        "width" : "100%",
+		                        "height" : "100%",
+		                        "position" : "absolute",
+		                        "bottom" : "0",
+		                        "background" : "transparent"
+		                    }
+		                }
+		            ]
+		        }
+		    }
+		},
+        {
+            "path" : "pages/index/lookup/lookup",
+            "style" : {
+                "app-plus" : {
+                    "titleNView" : false,
+                    "animationType" : "slide-in-bottom"
+                }
+            }
+        },
+        {
+            "path" : "pages/login/signin",
+            "style" : {
+                "navigationBarTitleText" : "登录",
+                "navigationBarTextStyle" : "black"
+            }
+        },
+        {
+            "path" : "pages/login/signup",
+            "style" : {
+                "navigationBarTitleText" : "注册",
+                "navigationBarTextStyle" : "black"
+            }
+        },
+        {
+            "path" : "pages/profile/profile",
+            "style" : 
+            {
+                "enablePullDownRefresh" : false,
+                "navigationBarTextStyle": "white",
+                "app-plus": {
+                   "titleNView":  false
+                }
+            }
+        }
+    ],
+    "globalStyle" : {
+        "navigationBarTextStyle" : "#000000",
+        "navigationBarBackgroundColor" : "#F9F9F9",
+        "backgroundColor" : "#F6F6F6",
+        "backgroundColorTop" : "#F4F5F6",
+        "backgroundColorBottom" : "#F9F9F9"
+    },
+    "uniIdRouter" : {},
+    "tabBar": {
+        "fontSize": 14,
+        "selectedColor": "#483AE6",
+        "borderStyle": "white",
+    	"list": [{
+                "text": "物品",
+    			"pagePath": "pages/index/index",
+    			"iconPath": "static/home.png",
+    			"selectedIconPath": "static/homeHL.png"
+    		},
+    		{
+                "text": "个人中心",
+    			"pagePath": "pages/profile/profile",
+    			"iconPath": "static/profile.png",
+    			"selectedIconPath": "static/profileHL.png"
+    		}
+    	]
+    }
+}
